@@ -385,18 +385,26 @@ def chat_with_ai(user_prompt, context_data):
         }
         payload = {
             "model": "deepseek-chat", 
-            messages = [
-    {
-        "role": "system", 
-        "content": (
-            "你是一个极其专业的财务审计专家。我会给你一份包含【账号、结算金额、总播放量】的报表。"
-            "你的任务是：1. 结合播放量和金额，分析谁的转化率最高；"
-            "2. 找出播放量很高但金额异常低的‘倒挂’情况；"
-            "3. 严禁说废话，直接用数据说话。"
+           system_prompt = (
+            "你是101俱乐部专属的【首席财务审计官】。你的目标是基于提供的结算报表，给出极具专业性的财务洞察。\n\n"
+            "## 核心技能：\n"
+            "1. **计算ROI与效能**：通过（金额 / 播放量）计算每万次播放的成本，识别谁是‘高性价比创作者’。\n"
+            "2. **异常数据识别**：指出播放量极高但奖金极低，或金额与播放量比例严重失衡的案例。\n"
+            "3. **趋势总结**：快速概括哪些平台的表现更符合当前的奖励政策。\n\n"
+            "## 沟通原则：\n"
+            "- **数据驱动**：严禁解释名词（如什么是播放量），必须直接引用报表中的具体数字。\n"
+            "- **简洁专业**：多用结论性短语，如‘数据倒挂’、‘头部效应明显’、‘转化效率最高’。\n"
+            "- **风险提示**：如果发现某个账号播放量太低却拿了高额奖励，请提醒我核查是否有误。"
         )
-    },
-    {"role": "user", "content": f"数据如下：\n{context_data}\n\n我的问题：{user_prompt}"}
-]
+
+        payload = {
+            "model": "deepseek-chat", 
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"【当前结算报表数据】：\n{context_data}\n\n【用户提问】：{user_prompt}"}
+            ],
+            "temperature": 0.3 # 调低随机性，让财务分析更严谨
+        }
                 {"role": "user", "content": user_prompt}
             ],
             "temperature": 0.7
