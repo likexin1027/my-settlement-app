@@ -406,7 +406,7 @@ def chat_with_ai(user_prompt, context_data):
         }
 
        # 发送请求，增加 timeout=60
-     response = requests.post(url, json=payload, headers=headers, timeout=60)
+        response = requests.post(url, json=payload, headers=headers, timeout=60)
         
         # 解析结果
         res_json = response.json()
