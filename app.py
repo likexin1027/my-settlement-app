@@ -97,6 +97,27 @@ def build_reward_lookup(df):
         d[plat] = [(row["阈值数值"], float(row["奖励金额"])) for _, row in sub.iterrows()]
     return d
 
+def describe_excel_error(err, filename):
+    s = str(err).lower()
+    reasons = []
+    if "encrypted" in s or "password" in s:
+        reasons.append("文件加密或受保护")
+    if "not a zip file" in s or "unsupported file format" in s or "badzipfile" in s:
+        reasons.append("文件损坏或并非标准xlsx/xls")
+    if "calamine" in s and ("not installed" in s or "module" in s):
+        reasons.append("缺少读取引擎，请安装python-calamine")
+    if "openpyxl" in s and ("styles" in s or "fills" in s):
+        reasons.append("复杂样式导致解析失败，建议重导出或简化样式")
+    if filename.endswith(".xls") and ("xlrd" in s or "format" in s):
+        reasons.append(".xls兼容性问题，建议另存为.xlsx后再上传")
+    if "filetype" in s or "content-type" in s:
+        reasons.append("扩展名与实际内容不匹配")
+    msg = "Excel读取失败"
+    if reasons:
+        msg += "：" + "；".join(reasons)
+    msg += f"。原始信息：{str(err)}"
+    return msg
+
 def base_reward(plat, views, lookup):
     if plat not in lookup:
         return 0.0
@@ -226,8 +247,8 @@ def render():
             else:
                 bio.seek(0)
                 df = pd.read_excel(bio)
-        except:
-            st.error("Excel读取失败，请确认文件格式")
+        except Exception as e:
+            st.error(describe_excel_error(e, name))
             return
     required = ["渠道", "播放量", "点赞", "作品类型", "账号名称"]
     miss = [c for c in required if c not in df.columns]
