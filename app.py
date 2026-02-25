@@ -374,49 +374,98 @@ def render():
     else:
         st.info("💡 请先上传 Excel 文件并完成结算，AI 助手将自动开启。")
 # --- 核心 AI 函数：确保左侧没有任何空格，顶格写 ---
+import streamlit as st
+import pandas as pd
+import requests
+import io
+
+# --- 1. 核心 AI 逻辑函数 (顶格写) ---
 def chat_with_ai(user_prompt, context_data):
     try:
+        # 从 Streamlit Secrets 获取 Key
+        if "DEEPSEEK_API_KEY" not in st.secrets:
+            return "错误：未在 Secrets 中配置 API Key。"
+            
         api_key = st.secrets["DEEPSEEK_API_KEY"]
         url = "https://api.deepseek.com/chat/completions"
+        
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}"
         }
 
-        # 1. 先定义人设指令变量
+        # 强化版审计官人设
         system_prompt = (
-            "你是101俱乐部专属的【首席财务审计官】。你的目标是基于提供的结算报表，给出极具专业性的财务洞察。\n\n"
-            "## 核心技能：\n"
-            "1. **计算ROI与效能**：通过（金额 / 播放量）计算每万次播放的成本，识别谁是‘高性价比创作者’。\n"
-            "2. **异常数据识别**：指出播放量极高但奖金极低，或金额与播放量比例严重失衡的案例。\n"
-            "3. **趋势总结**：快速概括哪些平台的表现更符合当前的奖励政策。\n\n"
-            "## 沟通原则：\n"
-            "- **数据驱动**：严禁解释名词，必须直接引用报表中的具体数字。\n"
-            "- **简洁专业**：多用结论性短语，如‘数据倒挂’、‘转化效率最高’。"
+            "你是101俱乐部专属的【首席财务审计官】。你的任务是基于提供的结算数据给出专业洞察。\n"
+            "1. **计算效能**：通过（金额 / 播放量）计算每万次播放的收益，识别高性价比作者。\n"
+            "2. **数据监控**：直接引用报表中的具体数字，指出播放量与金额不匹配的异常账号。\n"
+            "3. **专业表达**：严禁解释名词，直接给出‘数据倒挂’、‘头部效应’等审计结论。"
         )
 
-        # 2. 构造请求载体 (注意这里的 payload 只定义一次，且括号完全匹配)
         payload = {
             "model": "deepseek-chat", 
             "messages": [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"【当前结算报表数据】：\n{context_data}\n\n【用户提问】：{user_prompt}"}
+                {"role": "user", "content": f"【当前结算报表】：\n{context_data}\n\n【用户提问】：{user_prompt}"}
             ],
             "temperature": 0.3
         }
 
-       # 发送请求，增加 timeout=60
+        # 发起请求，设置 60 秒超时
         response = requests.post(url, json=payload, headers=headers, timeout=60)
-        
-        # 解析结果
         res_json = response.json()
+
         if response.status_code != 200:
             return f"API 报错: {res_json.get('error', {}).get('message', '未知错误')}"
-            
+        
         return res_json['choices'][0]['message']['content']
 
     except requests.exceptions.Timeout:
         return "AI 响应超时了，可能是 DeepSeek 服务器太忙，请稍后再试。"
     except Exception as e:
         return f"AI 暂时掉线了: {str(e)}"
+
+# --- 2. 页面主函数 ---
+def render():
+    st.set_page_config(page_title="101俱乐部结算工具", layout="wide")
+    st.title("💰 101俱乐部财务结算助手")
+    
+    # 这里放你原本的 Excel 上传和处理逻辑
+    uploaded_file = st.file_uploader("上传结算 Excel 文件", type=["xlsx"])
+    
+    if uploaded_file:
+        # --- 假设这里是你之前的处理逻辑 (请保留你原本的数据处理代码) ---
+        # 记得在生成 summary 时加入“播放量”列，AI 才能分析
+        # summary = result.groupby("账号名称").agg({"总奖励":"sum", "播放量数值":"sum"})
+        
+        st.success("数据处理完成！")
+        
+        # --- AI 对话界面 ---
+        st.divider()
+        st.subheader("🤖 财务审计 AI 对话")
+        
+        if "messages" not in st.session_state:
+            st.session_state.messages = []
+
+        for message in st.session_state.messages:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+
+        if prompt := st.chat_input("问问 AI：谁的万播收益最高？"):
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            with st.chat_message("user"):
+                st.markdown(prompt)
+
+            with st.chat_message("assistant"):
+                # 获取汇总数据作为上下文
+                context_text = ""
+                if "summary_data" in st.session_state:
+                    context_text = st.session_state.summary_data.to_string()
+                
+                response = chat_with_ai(prompt, context_text)
+                st.markdown(response)
+                st.session_state.messages.append({"role": "assistant", "content": response})
+
+# --- 3. 启动程序 (最关键的顶格逻辑) ---
+if __name__ == "__main__":
     render()
