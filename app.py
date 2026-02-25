@@ -315,7 +315,9 @@ def render():
     result = kept.copy()
     result = result[["渠道", "账号名称", "播放量", "点赞", "作品类型", "基础奖励", "限时奖励", "优秀奖励", "总奖励", "是否计入结算"]]
     with tabs[0]:
-        summary = result[result["是否计入结算"]].groupby("账号名称", as_index=False)["总奖励"].sum().rename(columns={"总奖励": "结算金额"})
+        summary = result[result["是否计入结算"]].groupby("账号名称", as_index=False).agg({ "总奖励": "sum","播放量数值": "sum"}).rename(columns={"总奖励": "结算金额", "播放量数值": "总播放量"})
+
+# 存入缓存，给 AI 看
         st.session_state["summary_data"] = summary
         total_payout = summary["结算金额"].sum() if not summary.empty else 0.0
         total_views = result[result["是否计入结算"]]["播放量数值"].sum() if "播放量数值" in result.columns else 0.0
@@ -341,7 +343,7 @@ def render():
         mapping.to_excel(writer, index=False, sheet_name="奖励配置")
     st.download_button("下载处理后的Excel", data=buffer.getvalue(), file_name="101俱乐部结算结果.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     st.divider()
-    st.subheader("🤖 101 结算智能助手")
+    st.subheader(" 101 结算智能助手")
 
     # 检查是否有计算好的数据
     if "summary_data" in st.session_state and st.session_state["summary_data"] is not None:
@@ -383,8 +385,18 @@ def chat_with_ai(user_prompt, context_data):
         }
         payload = {
             "model": "deepseek-chat", 
-            "messages": [
-                {"role": "system", "content": f"你是一个财务结算专家。这是当前的结算摘要：{context_data}。请回答用户的问题。"},
+            messages = [
+    {
+        "role": "system", 
+        "content": (
+            "你是一个极其专业的财务审计专家。我会给你一份包含【账号、结算金额、总播放量】的报表。"
+            "你的任务是：1. 结合播放量和金额，分析谁的转化率最高；"
+            "2. 找出播放量很高但金额异常低的‘倒挂’情况；"
+            "3. 严禁说废话，直接用数据说话。"
+        )
+    },
+    {"role": "user", "content": f"数据如下：\n{context_data}\n\n我的问题：{user_prompt}"}
+]
                 {"role": "user", "content": user_prompt}
             ],
             "temperature": 0.7
