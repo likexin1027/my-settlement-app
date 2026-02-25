@@ -315,6 +315,7 @@ def render():
     result = result[["渠道", "账号名称", "播放量", "点赞", "作品类型", "基础奖励", "限时奖励", "优秀奖励", "总奖励", "是否计入结算"]]
     with tabs[0]:
         summary = result[result["是否计入结算"]].groupby("账号名称", as_index=False)["总奖励"].sum().rename(columns={"总奖励": "结算金额"})
+        st.session_state["summary_data"] = summary
         total_payout = summary["结算金额"].sum() if not summary.empty else 0.0
         total_views = result[result["是否计入结算"]]["播放量数值"].sum() if "播放量数值" in result.columns else 0.0
         counted = int(result["是否计入结算"].sum())
@@ -339,98 +340,64 @@ def render():
         mapping.to_excel(writer, index=False, sheet_name="奖励配置")
     st.download_button("下载处理后的Excel", data=buffer.getvalue(), file_name="101俱乐部结算结果.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 import streamlit as st
-# 这里假设你使用的是某个大模型的 SDK
-
-with st.expander("🤖 结算助手 (AI)"):
-    # 初始化对话历史
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
-
-    # 展示历史消息
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-
-    # 接收用户输入
-    if prompt := st.chat_input("问问我关于结算的事..."):
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
-
-        # 这里调用 AI 接口
-        with st.chat_message("assistant"):
-            # 你可以将当前的 summary 变量传给 AI
-            response = f"收到！正在为你分析数据...（此处接入 API 响应）" 
-            st.markdown(response)
-            st.session_state.messages.append({"role": "assistant", "content": response})
-            import streamlit as st
-import requests  # 记得在 requirements.txt 加上 requests
-
-# --- AI 调用函数 ---
+import streamlit as st
+import requests
+# --- 核心 AI 函数：只写这一个即可 ---
 def chat_with_ai(user_prompt, context_data):
-    api_key = st.secrets["DEEPSEEK_API_KEY"]
-    url = "https://api.deepseek.com/chat/completions" # 假设是 DeepSeek 地址
-    
-    # 构造发送给 AI 的“人设”和“上下文”
-    messages = [
-        {"role": "system", "content": f"你是一个财务结算专家。这是当前的结算摘要：{context_data}。请回答用户的问题。"},
-        {"role": "user", "content": user_prompt}
-    ]
-    
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
-    }
-    
-    payload = {
-        "model": "deepseek-chat",
-        "messages": messages,
-        "temperature": 0.7
-    }
-    
     try:
+        api_key = st.secrets["DEEPSEEK_API_KEY"]
+        url = "https://api.deepseek.com/chat/completions"
+        
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}"
+        }
+        
+        payload = {
+            "model": "deepseek-chat", 
+            "messages": [
+                {"role": "system", "content": f"你是一个财务结算专家。这是当前的结算摘要：{context_data}。请回答用户的问题。"},
+                {"role": "user", "content": user_prompt}
+            ],
+            "temperature": 0.7
+        }
+        
         response = requests.post(url, json=payload, headers=headers)
         return response.json()['choices'][0]['message']['content']
     except Exception as e:
         return f"AI 暂时掉线了: {str(e)}"
-
-# --- UI 界面嵌入 ---
+        # --- 统一的 UI 界面 ---
 st.divider()
-st.subheader("结算智能助手")
+st.subheader("🤖 101 结算智能助手")
 
-# 检查 session_state 中是否有计算好的汇总数据
+# 步骤 A: 检查是否有数据（使用我们之前建议的 session_state）
 if "summary_data" in st.session_state and st.session_state.summary_data is not None:
     
-    # 1. 准备 AI 背景资料：将汇总表转为简单的文本
-    # 增加一些引导词，让 AI 明白数据的含义
     summary = st.session_state.summary_data
-    context_text = f"这是 101 俱乐部的结算汇总数据：\n{summary.to_string(index=False)}"
+    context_text = summary.to_string(index=False)
     
-    # 2. 初始化聊天记录
+    # 步骤 B: 初始化对话历史
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
-    # 3. 展示历史消息 (使用更现代的 UI)
+    # 步骤 C: 展示历史消息
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    # 4. 用户输入处理
-    # 注意：st.chat_input 最好放在主循环的最外层
-    if prompt := st.chat_input("问我：谁的奖金最高？/ 帮我写个结算通知"):
-        # 用户消息
+    # 步骤 D: 用户输入
+    if prompt := st.chat_input("问我：谁的奖金最高？"):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
 
-        # AI 响应
         with st.chat_message("assistant"):
-            with st.spinner("AI 正在分析数据..."):
-                # 调用你之前定义的 chat_with_ai 函数
+            with st.spinner("AI 正在思考..."):
+                # 调用上面定义好的唯一函数
                 response = chat_with_ai(prompt, context_text)
                 st.markdown(response)
                 st.session_state.messages.append({"role": "assistant", "content": response})
 else:
-    # 如果还没上传文件或计算，显示友好提示
-    st.info("💡 请先在上方上传 Excel 文件并完成结算，AI 助手将自动为你分析报表内容。")
+    # 还没数据时的提示
+    st.info("💡 请先在上方上传 Excel 文件并完成结算，AI 助手将自动开启。")
 render()
