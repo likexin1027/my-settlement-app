@@ -396,30 +396,41 @@ def chat_with_ai(user_prompt, context_data):
 
 # --- UI 界面嵌入 ---
 st.divider()
-st.subheader("🤖 101 结算智能助手")
+st.subheader("结算智能助手")
 
-if "summary" in locals(): # 确保你已经计算出了汇总数据
-    # 将汇总表转为简单的文本，喂给 AI
-    context_text = summary.to_string(index=False)
+# 检查 session_state 中是否有计算好的汇总数据
+if "summary_data" in st.session_state and st.session_state.summary_data is not None:
     
+    # 1. 准备 AI 背景资料：将汇总表转为简单的文本
+    # 增加一些引导词，让 AI 明白数据的含义
+    summary = st.session_state.summary_data
+    context_text = f"这是 101 俱乐部的结算汇总数据：\n{summary.to_string(index=False)}"
+    
+    # 2. 初始化聊天记录
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
-    # 聊天历史展示
+    # 3. 展示历史消息 (使用更现代的 UI)
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    # 用户输入
-    if prompt := st.chat_input("问我关于这份报表的问题（如：谁的奖金最高？）"):
+    # 4. 用户输入处理
+    # 注意：st.chat_input 最好放在主循环的最外层
+    if prompt := st.chat_input("问我：谁的奖金最高？/ 帮我写个结算通知"):
+        # 用户消息
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
 
+        # AI 响应
         with st.chat_message("assistant"):
-            response = chat_with_ai(prompt, context_text)
-            st.markdown(response)
-            st.session_state.messages.append({"role": "assistant", "content": response})
+            with st.spinner("AI 正在分析数据..."):
+                # 调用你之前定义的 chat_with_ai 函数
+                response = chat_with_ai(prompt, context_text)
+                st.markdown(response)
+                st.session_state.messages.append({"role": "assistant", "content": response})
 else:
-    st.info("💡 请先上传 Excel 文件，AI 将会自动读取数据并为你分析。")
+    # 如果还没上传文件或计算，显示友好提示
+    st.info("💡 请先在上方上传 Excel 文件并完成结算，AI 助手将自动为你分析报表内容。")
 render()
