@@ -336,6 +336,26 @@ def render():
         st.subheader("被排除内容")
         if not removed.empty:
             st.dataframe(removed, width="stretch")
+            if uploaded_file:
+        # --- 补全这里：将你原本的计算逻辑贴回来 ---
+        # 示例：
+        df = pd.read_excel(uploaded_file)
+        
+        # 1. 这里进行你的结算计算（保留你之前的代码）
+        # result = ... 
+        # summary = ...
+        
+        # 2. 必须要展示出来，页面才不会是空的
+        st.subheader("📊 结算预览")
+        st.dataframe(result) # 👈 确保有这一行
+        
+        st.subheader("📈 账号汇总")
+        st.dataframe(summary) # 👈 确保有这一行
+
+        # 3. 将汇总存入 session_state 供 AI 读取
+        st.session_state["summary_data"] = summary 
+        
+        st.success("数据处理完成！")
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         result.to_excel(writer, index=False, sheet_name="结算明细")
