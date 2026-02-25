@@ -48,12 +48,9 @@ def create_default_mapping():
     thresholds = [1000000, 500000, 200000, 100000, 50000, 30000, 10000]
     labels = ["≥100w", "≥50w", "≥20w", "≥10w", "≥5w", "≥3w", "≥1w"]
     rows = []
-    base_b = {"≥100w": 1800, "≥50w": 1200, "≥20w": 800, "≥10w": 500, "≥5w": 300, "≥3w": 200, "≥1w": 100}
     for t, lab in zip(thresholds, labels):
-        rows.append({"平台": "B站", "阈值标签": lab, "阈值数值": t, "奖励金额": float(base_b[lab])})
-        rows.append({"平台": "小红书", "阈值标签": lab, "阈值数值": t, "奖励金额": float(round(base_b[lab] * 0.5))})
-        rows.append({"平台": "抖音", "阈值标签": lab, "阈值数值": t, "奖励金额": float(round(base_b[lab] / 6.0))})
-        rows.append({"平台": "视频号", "阈值标签": lab, "阈值数值": t, "奖励金额": float(round(base_b[lab] / 6.0))})
+        for plat in ["B站", "小红书", "抖音", "视频号"]:
+            rows.append({"平台": plat, "阈值标签": lab, "阈值数值": t, "奖励金额": 0.0})
     df = pd.DataFrame(rows)
     return df
 
