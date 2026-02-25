@@ -194,9 +194,13 @@ def filter_banned(df, text_cols):
 def render():
     st.title("101俱乐部活动奖金结算")
     st.caption("上传数据，配置基础奖励，自动计算限时与优秀奖励，按作者限额输出结算结果")
+    with st.sidebar:
+        st.header("规则说明")
+        st.text("支持.xlsx/.xls/.csv；须含: 渠道/播放量/点赞/作品类型/账号名称")
+        st.text("可上传奖励配置，覆盖默认阶梯")
+        cfg = st.file_uploader("上传奖励配置", type=["xlsx", "xls", "csv"], key="cfg_sidebar")
     uploaded = st.file_uploader("上传Excel或CSV文件", type=["xlsx", "xls", "csv"])
     mapping = create_default_mapping()
-    cfg = st.file_uploader("可选：上传奖励配置（Excel/CSV）", type=["xlsx", "xls", "csv"], key="cfg")
     if cfg is not None:
         n = getattr(cfg, "name", "").lower()
         try:
@@ -237,8 +241,8 @@ def render():
                 out = out[out["平台"].isin(["B站", "小红书", "抖音", "视频号"])]
                 out = out[["平台", "阈值标签", "阈值数值", "奖励金额"]].dropna(subset=["阈值数值", "奖励金额"])
                 mapping = out
-    st.subheader("基础奖励配置")
-    mapping = st.data_editor(mapping, num_rows="dynamic", use_container_width=True)
+    with st.expander("基础奖励配置", expanded=True):
+        mapping = st.data_editor(mapping, num_rows="dynamic", width="stretch")
     lookup = build_reward_lookup(mapping)
     if uploaded is None:
         return
@@ -287,16 +291,24 @@ def render():
     kept = pick_top5_per_author(kept)
     result = kept.copy()
     result = result[["渠道", "账号名称", "播放量", "点赞", "作品类型", "基础奖励", "限时奖励", "优秀奖励", "总奖励", "是否计入结算"]]
-    st.subheader("结算预览")
-    st.dataframe(result, use_container_width=True)
-    st.subheader("被排除内容")
-    if not removed.empty:
-        st.dataframe(removed, use_container_width=True)
+    tabs = st.tabs(["结算预览", "作者汇总", "数据分析", "被排除内容"])
+    with tabs[0]:
+        st.dataframe(result, width="stretch")
     summary = result[result["是否计入结算"]].groupby("账号名称", as_index=False)["总奖励"].sum().rename(columns={"总奖励": "结算金额"})
-    st.subheader("作者汇总")
-    st.dataframe(summary, use_container_width=True)
-    total_payout = summary["结算金额"].sum() if not summary.empty else 0.0
-    st.metric("总结算金额", f"{total_payout:,.2f} 元")
+    with tabs[1]:
+        cols = st.columns(3)
+        total_payout = summary["结算金额"].sum() if not summary.empty else 0.0
+        cols[0].metric("总结算金额", f"{total_payout:,.2f} 元")
+        cols[1].metric("参与作者数", f"{summary.shape[0]}")
+        cols[2].metric("计入条目数", f"{int(result['是否计入结算'].sum())}")
+        st.dataframe(summary, width="stretch")
+    with tabs[2]:
+        plat_counts = result.groupby("渠道").size().rename("数量").reset_index()
+        st.bar_chart(plat_counts.set_index("渠道"))
+        st.scatter_chart(result[["播放量数值", "点赞数值"]].rename(columns={"播放量数值": "views", "点赞数值": "likes"}))
+    with tabs[3]:
+        if not removed.empty:
+            st.dataframe(removed, width="stretch")
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         result.to_excel(writer, index=False, sheet_name="结算明细")
