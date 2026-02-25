@@ -1,4 +1,3 @@
-这是原代码功能不能丢失，分析问题并修复错误
 import io
 import pandas as pd
 import streamlit as st
