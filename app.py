@@ -339,7 +339,7 @@ def render():
         summary.to_excel(writer, index=False, sheet_name="作者汇总")
         mapping.to_excel(writer, index=False, sheet_name="奖励配置")
     st.download_button("下载处理后的Excel", data=buffer.getvalue(), file_name="101俱乐部结算结果.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-st.divider()
+    st.divider()
     st.subheader("🤖 101 结算智能助手")
 
     # 检查是否有计算好的数据
