@@ -363,4 +363,63 @@ with st.expander("🤖 结算助手 (AI)"):
             response = f"收到！正在为你分析数据...（此处接入 API 响应）" 
             st.markdown(response)
             st.session_state.messages.append({"role": "assistant", "content": response})
+            import streamlit as st
+import requests  # 记得在 requirements.txt 加上 requests
+
+# --- AI 调用函数 ---
+def chat_with_ai(user_prompt, context_data):
+    api_key = st.secrets["DEEPSEEK_API_KEY"]
+    url = "https://api.deepseek.com/chat/completions" # 假设是 DeepSeek 地址
+    
+    # 构造发送给 AI 的“人设”和“上下文”
+    messages = [
+        {"role": "system", "content": f"你是一个财务结算专家。这是当前的结算摘要：{context_data}。请回答用户的问题。"},
+        {"role": "user", "content": user_prompt}
+    ]
+    
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
+    
+    payload = {
+        "model": "deepseek-chat",
+        "messages": messages,
+        "temperature": 0.7
+    }
+    
+    try:
+        response = requests.post(url, json=payload, headers=headers)
+        return response.json()['choices'][0]['message']['content']
+    except Exception as e:
+        return f"AI 暂时掉线了: {str(e)}"
+
+# --- UI 界面嵌入 ---
+st.divider()
+st.subheader("🤖 101 结算智能助手")
+
+if "summary" in locals(): # 确保你已经计算出了汇总数据
+    # 将汇总表转为简单的文本，喂给 AI
+    context_text = summary.to_string(index=False)
+    
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+
+    # 聊天历史展示
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    # 用户输入
+    if prompt := st.chat_input("问我关于这份报表的问题（如：谁的奖金最高？）"):
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        with st.chat_message("assistant"):
+            response = chat_with_ai(prompt, context_text)
+            st.markdown(response)
+            st.session_state.messages.append({"role": "assistant", "content": response})
+else:
+    st.info("💡 请先上传 Excel 文件，AI 将会自动读取数据并为你分析。")
 render()
