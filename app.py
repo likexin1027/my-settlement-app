@@ -339,20 +339,47 @@ def render():
         summary.to_excel(writer, index=False, sheet_name="作者汇总")
         mapping.to_excel(writer, index=False, sheet_name="奖励配置")
     st.download_button("下载处理后的Excel", data=buffer.getvalue(), file_name="101俱乐部结算结果.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-import streamlit as st
-import streamlit as st
-import requests
-# --- 核心 AI 函数：只写这一个即可 ---
+st.divider()
+    st.subheader("🤖 101 结算智能助手")
+
+    # 检查是否有计算好的数据
+    if "summary_data" in st.session_state and st.session_state["summary_data"] is not None:
+        summary_for_ai = st.session_state["summary_data"]
+        context_text = summary_for_ai.to_string(index=False)
+        
+        # 初始化消息记录
+        if "messages" not in st.session_state:
+            st.session_state.messages = []
+
+        # 展示历史对话
+        for msg in st.session_state.messages:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+
+        # 接收用户输入 (对话框在这里！)
+        if prompt := st.chat_input("问我：谁的奖金最高？"):
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            with st.chat_message("user"):
+                st.markdown(prompt)
+
+            with st.chat_message("assistant"):
+                with st.spinner("AI 正在思考..."):
+                    # 调用上面定义好的函数
+                    response = chat_with_ai(prompt, context_text)
+                    st.markdown(response)
+                    st.session_state.messages.append({"role": "assistant", "content": response})
+    else:
+        st.info("💡 请先上传 Excel 文件并完成结算，AI 助手将自动开启。")
+
+# --- 核心 AI 函数：放在 render 函数外面 (顶格写) ---
 def chat_with_ai(user_prompt, context_data):
     try:
         api_key = st.secrets["DEEPSEEK_API_KEY"]
         url = "https://api.deepseek.com/chat/completions"
-        
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}"
         }
-        
         payload = {
             "model": "deepseek-chat", 
             "messages": [
@@ -361,43 +388,11 @@ def chat_with_ai(user_prompt, context_data):
             ],
             "temperature": 0.7
         }
-        
         response = requests.post(url, json=payload, headers=headers)
         return response.json()['choices'][0]['message']['content']
     except Exception as e:
         return f"AI 暂时掉线了: {str(e)}"
-        # --- 统一的 UI 界面 ---
-st.divider()
-st.subheader("🤖 101 结算智能助手")
 
-# 步骤 A: 检查是否有数据（使用我们之前建议的 session_state）
-if "summary_data" in st.session_state and st.session_state.summary_data is not None:
-    
-    summary = st.session_state.summary_data
-    context_text = summary.to_string(index=False)
-    
-    # 步骤 B: 初始化对话历史
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
-
-    # 步骤 C: 展示历史消息
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
-
-    # 步骤 D: 用户输入
-    if prompt := st.chat_input("问我：谁的奖金最高？"):
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
-
-        with st.chat_message("assistant"):
-            with st.spinner("AI 正在思考..."):
-                # 调用上面定义好的唯一函数
-                response = chat_with_ai(prompt, context_text)
-                st.markdown(response)
-                st.session_state.messages.append({"role": "assistant", "content": response})
-else:
-    # 还没数据时的提示
-    st.info("💡 请先在上方上传 Excel 文件并完成结算，AI 助手将自动开启。")
-render()
+# --- 最后执行主程序 ---
+if __name__ == "__main__":
+    render()
