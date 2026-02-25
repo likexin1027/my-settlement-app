@@ -338,5 +338,29 @@ def render():
         summary.to_excel(writer, index=False, sheet_name="作者汇总")
         mapping.to_excel(writer, index=False, sheet_name="奖励配置")
     st.download_button("下载处理后的Excel", data=buffer.getvalue(), file_name="101俱乐部结算结果.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+import streamlit as st
+# 这里假设你使用的是某个大模型的 SDK
 
+with st.expander("🤖 结算助手 (AI)"):
+    # 初始化对话历史
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+
+    # 展示历史消息
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    # 接收用户输入
+    if prompt := st.chat_input("问问我关于结算的事..."):
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        # 这里调用 AI 接口
+        with st.chat_message("assistant"):
+            # 你可以将当前的 summary 变量传给 AI
+            response = f"收到！正在为你分析数据...（此处接入 API 响应）" 
+            st.markdown(response)
+            st.session_state.messages.append({"role": "assistant", "content": response})
 render()
