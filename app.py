@@ -405,15 +405,18 @@ def chat_with_ai(user_prompt, context_data):
             "temperature": 0.3
         }
 
-        # 3. 发送请求并解析结果
-        response = requests.post(url, json=payload, headers=headers)
-        res_json = response.json()
+       # 发送请求，增加 timeout=60
+     response = requests.post(url, json=payload, headers=headers, timeout=60)
         
+        # 解析结果
+        res_json = response.json()
         if response.status_code != 200:
-            return f"AI 暂时掉线了 (API错误): {res_json.get('error', {}).get('message', '未知错误')}"
+            return f"API 报错: {res_json.get('error', {}).get('message', '未知错误')}"
             
         return res_json['choices'][0]['message']['content']
 
+    except requests.exceptions.Timeout:
+        return "AI 响应超时了，可能是 DeepSeek 服务器太忙，请稍后再试。"
     except Exception as e:
-        return f"AI 暂时掉线了 (系统错误): {str(e)}"
+        return f"AI 暂时掉线了: {str(e)}"
     render()
