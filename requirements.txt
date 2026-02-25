@@ -3,3 +3,4 @@ pandas<3
 openpyxl
 python-calamine
 xlrd
+plotly
