@@ -1,6 +1,5 @@
 streamlit
-pandas<3
+pandas
 openpyxl
-python-calamine
-xlrd
 plotly
+requests
