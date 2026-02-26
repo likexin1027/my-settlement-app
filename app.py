@@ -1,342 +1,497 @@
 import io
+import tempfile
+import csv
+import datetime
+from pathlib import Path
+
 import pandas as pd
 import streamlit as st
+from openpyxl import load_workbook  # type: ignore
+from typing import TYPE_CHECKING, cast
 
-st.set_page_config(page_title="101俱乐部结算工具", layout="wide")
 
-def normalize_platform(s):
-    if pd.isna(s):
-        return ""
-    x = str(s).strip().lower()
-    if "b站" in x or "bilibili" in x or "哔哩" in x:
-        return "B站"
-    if "小红书" in x or "red" in x:
-        return "小红书"
-    if "视频号" in x:
-        return "视频号"
-    if "抖音" in x or "douyin" in x:
-        return "抖音"
-    return s
 
-def parse_number(v):
-    if pd.isna(v):
-        return 0
-    if isinstance(v, (int, float)):
-        return float(v)
-    s = str(v).strip().replace(",", "")
-    if s.endswith("+"):
-        s = s[:-1]
-    m = 1.0
-    if "亿" in s:
-        s = s.replace("亿", "")
-        m = 100000000.0
-    elif "w" in s.lower():
-        s = s.lower().replace("w", "")
-        m = 10000.0
-    elif "万" in s:
-        s = s.replace("万", "")
-        m = 10000.0
-    try:
-        return float(s) * m
-    except:
-        try:
-            return float(s)
-        except:
-            return 0.0
+if TYPE_CHECKING:
+    from typing import Any as Xlsx2csvType  # 避免开发环境未安装 xlsx2csv 的类型导入报错  # pyright: ignore[reportUnusedImport]
 
-def create_default_mapping():
-    thresholds = [1000000, 500000, 200000, 100000, 50000, 30000, 10000]
-    labels = ["≥100w", "≥50w", "≥20w", "≥10w", "≥5w", "≥3w", "≥1w"]
-    rows = []
-    for t, lab in zip(thresholds, labels):
-        for plat in ["B站", "小红书", "抖音", "视频号"]:
-            rows.append({"平台": plat, "阈值标签": lab, "阈值数值": t, "奖励金额": 0.0})
-    df = pd.DataFrame(rows)
-    return df
 
-def load_default_mapping():
-    try:
-        try:
-            mdf = pd.read_csv("奖励金额t.csv")
-        except:
-            mdf = pd.read_csv("奖励金额t.csv", encoding="gbk")
-        cols = set(mdf.columns)
-        need_plat = "平台" in cols
-        has_val = "阈值数值" in cols
-        has_lab = "阈值标签" in cols
-        has_amt = "奖励金额" in cols
-        if need_plat and has_amt and (has_val or has_lab):
-            out = mdf.copy()
-            if not has_val and has_lab:
-                out["阈值数值"] = out["阈值标签"].apply(normalize_label_to_value)
-            if not has_lab and has_val:
-                out["阈值标签"] = out["阈值数值"].apply(value_to_label)
-            out = out[out["平台"].isin(["B站", "小红书", "抖音", "视频号"])]
-            out = out[["平台", "阈值标签", "阈值数值", "奖励金额"]].dropna(subset=["阈值数值", "奖励金额"])
-            return out
-        return create_default_mapping()
-    except:
-        return create_default_mapping()
+try:
+    import importlib
 
-def normalize_label_to_value(lab):
-    if pd.isna(lab):
+    _xlsx2csv = importlib.import_module("xlsx2csv")
+    Xlsx2csv = getattr(_xlsx2csv, "Xlsx2csv", None)
+    HAS_XLSX2CSV = Xlsx2csv is not None
+except Exception:  # pragma: no cover
+    Xlsx2csv = None  # type: ignore
+    HAS_XLSX2CSV = False  # pyright: ignore[reportConstantRedefinition]
+
+
+
+HAS_CALAMINE = False  # calamine 非必需；如需更强兼容可自行安装
+
+from reward_system.reward_logic import (
+    DEFAULT_REWARD_TABLE,  # pyright: ignore[reportUnknownVariableType]
+    DEFAULT_QUALITY_RULES,
+    DEFAULT_TIME_RULES,
+    build_download_buffer,  # pyright: ignore[reportUnknownVariableType]
+    compute_rewards,  # pyright: ignore[reportUnknownVariableType]
+    load_sample_data,  # pyright: ignore[reportUnknownVariableType]
+)
+
+from reward_system.activity_store import (
+    add_activity,
+    get_activity_by_id,
+    load_activities,
+    update_activity_rule,  # pyright: ignore[reportUnknownVariableType]
+    delete_activity,
+    update_activity_meta,
+)
+
+
+
+
+BASE_DIR = Path(__file__).resolve().parent
+
+st.set_page_config(page_title="活动奖励计算系统 | reward_system", layout="wide")
+
+REQUIRED_HINT = (
+    "必需：渠道/平台、播放量、作品类型，且账号ID/账号名称/账号昵称 至少一列。"
+    "可选：点赞、评论数、期数、视频标题/作品标题、B站热搜/热门。"
+)
+
+STATUS_BADGE = {
+    "草稿": "⚪️ 草稿",
+    "进行中": "🟢 进行中",
+    "已结束": "🔵 已结束",
+}
+
+
+def _parse_date(value: str | None) -> datetime.date | None:
+
+    if not value:
         return None
-    s = str(lab).strip().lower().replace("≥", "").replace("+", "")
-    s = s.replace("万", "w")
-    if "w" in s:
-        try:
-            n = float(s.replace("w", ""))
-            return int(n * 10000)
-        except:
-            return None
     try:
-        return int(float(s))
-    except:
+        return datetime.date.fromisoformat(value)
+    except Exception:
         return None
 
-def value_to_label(v):
-    if v >= 1000000:
-        return "≥100w"
-    if v >= 500000:
-        return "≥50w"
-    if v >= 200000:
-        return "≥20w"
-    if v >= 100000:
-        return "≥10w"
-    if v >= 50000:
-        return "≥5w"
-    if v >= 30000:
-        return "≥3w"
-    if v >= 10000:
-        return "≥1w"
-    return f"≥{int(v)}"
 
-def build_reward_lookup(df):
-    d = {}
-    for plat in df["平台"].unique():
-        sub = df[df["平台"] == plat].sort_values("阈值数值", ascending=False)
-        d[plat] = [(row["阈值数值"], float(row["奖励金额"])) for _, row in sub.iterrows()]
-    return d
+def show_friendly_excel_error(message: str | None = None) -> None:
 
-def describe_excel_error(err, filename):
-    s = str(err).lower()
-    reasons = []
-    if "encrypted" in s or "password" in s:
-        reasons.append("文件加密或受保护")
-    if "not a zip file" in s or "unsupported file format" in s or "badzipfile" in s:
-        reasons.append("文件损坏或并非标准xlsx/xls")
-    if "calamine" in s and ("not installed" in s or "module" in s):
-        reasons.append("缺少读取引擎，请安装python-calamine")
-    if "openpyxl" in s and ("styles" in s or "fills" in s):
-        reasons.append("复杂样式导致解析失败，建议重导出或简化样式")
-    if filename.endswith(".xls") and ("xlrd" in s or "format" in s):
-        reasons.append(".xls兼容性问题，建议另存为.xlsx后再上传")
-    if "filetype" in s or "content-type" in s:
-        reasons.append("扩展名与实际内容不匹配")
-    msg = "Excel读取失败"
-    if reasons:
-        msg += "：" + "；".join(reasons)
-    msg += f"。原始信息：{str(err)}"
-    return msg
+    tips = (
+        "📁 文件读取失败：可能是腾讯文档/金山文档/WPS 导出的 Excel 样式不兼容。\n"
+        "解决步骤：\n"
+        "1) 在 Excel/WPS 打开后，‘文件→另存为’，格式选 CSV UTF-8 (.csv)，再上传。\n"
+        "2) 或在 Excel 打开后，另存为新的 .xlsx，再上传。\n"
+        "如果问题仍然存在，请检查文件是否损坏或联系管理员。"
+    )
+    if message:
+        tips += f"\n（提示：{message}）"
+    st.error(tips)
 
-def read_xlsx_robust(bio):
+
+
+
+def read_excel_with_fallback(file_bytes: bytes) -> pd.DataFrame | None:  # pyright: ignore[reportUnknownParameterType, reportUnknownMemberType]
+    # 优先 openpyxl（含样式时可能报 Fill 相关错误）
     try:
-        return pd.read_excel(bio, engine="calamine")
-    except:
-        bio.seek(0)
+        return cast(pd.DataFrame, pd.read_excel(io.BytesIO(file_bytes), engine="openpyxl"))  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+
+    except Exception as exc_primary:  # noqa: BLE001
+        msg = str(exc_primary).lower()
+        if "fill" in msg or "openpyxl" in msg:
+            st.info("检测到样式问题，正在尝试自动转换为 CSV 再读取……")  # pyright: ignore[reportUnusedCallResult, reportUnnecessaryTypeIgnoreComment]
+        # 其次使用 xlsx2csv 仅读取值，不解析样式，兼容腾讯文档导出
         try:
-            return pd.read_excel(bio, engine="openpyxl")
-        except:
-            bio.seek(0)
+            if not HAS_XLSX2CSV:
+                raise RuntimeError("未安装 xlsx2csv，跳过自动转换。")
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".csv", newline="") as tmp:
+                tmp_path = tmp.name
+                Xlsx2csv(io.BytesIO(file_bytes), outputencoding="utf-8").convert(tmp_path)  # pyright: ignore[reportAny, reportOptionalCall]
+
+            with open(tmp_path, "r", encoding="utf-8", newline="") as f:
+                rows = list(csv.reader(f))
+            if not rows:
+                raise RuntimeError("文件内容为空或无法转换。")
+            header, *body = rows
+            header_seq = [str(h) for h in header]
+            return cast(pd.DataFrame, pd.DataFrame(body, columns=header_seq))
+
+
+
+
+
+        except Exception:
+            # 最后使用低级 openpyxl 兼容模式（忽略样式）
             try:
-                from openpyxl import load_workbook
-                wb = load_workbook(bio, data_only=True, read_only=True)
-                ws = wb.active
-                data = []
-                for row in ws.iter_rows(values_only=True):
-                    data.append(list(row))
+                wb = load_workbook(io.BytesIO(file_bytes), data_only=True, read_only=True)
+                sheet = wb.active
+                if sheet is None:
+                    raise RuntimeError("未找到工作表")
+                data = list(sheet.values)
                 if not data:
-                    return pd.DataFrame()
-                header = [str(x) if x is not None else "" for x in data[0]]
-                rows = data[1:]
-                return pd.DataFrame(rows, columns=header)
-            except Exception as e:
-                raise e
+                    raise RuntimeError("工作表为空")
+                header, *rows = data
+                header_seq = [str(h) for h in header]
+                return cast(pd.DataFrame, pd.DataFrame(rows, columns=header_seq))
 
-def base_reward(plat, views, lookup):
-    if plat not in lookup:
-        return 0.0
-    for th, amt in lookup[plat]:
-        if views >= th:
-            return amt
-    return 0.0
+            except Exception:
 
-def limited_time_bonus(views, typ):
-    if views > 10000 and isinstance(typ, str):
-        s = typ.lower()
-        if ("热点推荐" in s) or ("新春主题" in s):
-            return 50.0
-    return 0.0
+                show_friendly_excel_error("自动转换/兼容模式未成功，需按提示另存为后再上传。")
+                return None
 
-def excellence_bonus(plat, typ, likes, views):
-    b = 0.0
-    if isinstance(typ, str):
-        s = typ
-        if plat == "B站":
-            if "热搜" in s:
-                b += 100.0
-            if "热门" in s:
-                b += 200.0
-        if "短视频" in s and likes >= 100000:
-            b += 300.0
-        if "短视频" in s and views >= 2000000:
-            b += 1000.0
-    return b
 
-def pick_top5_per_author(df):
-    df = df.copy()
-    df["是否计入结算"] = False
-    pos = df["总奖励"] > 0
-    for author, group in df[pos].groupby("账号名称"):
-        idx = group.sort_values("总奖励", ascending=False).head(5).index
-        df.loc[idx, "是否计入结算"] = True
-    return df
+    return None
 
-def filter_banned(df, text_cols):
-    banned = ["BUG", "建议", "拉踩"]
-    mask = pd.Series([False] * len(df))
-    for col in text_cols:
-        if col in df.columns:
-            s = df[col].astype(str)
-            for w in banned:
-                mask = mask | s.str.contains(w, case=False, na=False)
-    out = df.copy()
-    out["排除原因"] = ""
-    out.loc[mask, "排除原因"] = "包含敏感词"
-    return out[~mask], out[mask]
 
-def render():
-    st.title("101俱乐部活动奖金结算")
-    st.caption("上传数据，配置基础奖励，自动计算限时与优秀奖励，按作者限额输出结算结果")
-    tabs = st.tabs(["结算中心", "规则设置"])
-    with tabs[1]:
-        mapping = load_default_mapping()
-        cfg = st.file_uploader("上传奖励配置（Excel/CSV）", type=["xlsx", "xls", "csv"], key="cfg")
-        if cfg is not None:
-            n = getattr(cfg, "name", "").lower()
+
+
+
+
+
+def read_uploaded_file(file: io.BytesIO, name: str) -> pd.DataFrame | None:
+    suffix = name.lower()
+    if suffix.endswith(":memory:"):
+        suffix = suffix[:-8]
+    if suffix.endswith(".xlsx") or suffix.endswith(".xls"):
+        return read_excel_with_fallback(file.read())
+    return cast(pd.DataFrame, pd.read_csv(file))
+
+
+
+
+
+
+def main() -> None:
+    activities = load_activities()
+    if "current_activity_id" not in st.session_state:
+        st.session_state.current_activity_id = activities[0]["id"] if activities else ""
+
+    # 活动管理核心区（常驻展开）
+    st.sidebar.header("活动管理核心区")
+
+    # 新建活动（可折叠，紧凑布局）
+    with st.sidebar.expander("新建活动", expanded=False):
+        with st.form("create_activity_form"):
+            c1, c2 = st.columns(2)
+            name = c1.text_input("活动名称", value="", key="create_name")
+            period = c2.text_input("期数", value="", key="create_period")
+
+            d1, d2 = st.columns(2)
+            start_date_input = d1.date_input("开始日期", value=None, key="create_start")
+            end_date_input = d2.date_input("结束日期", value=None, key="create_end")
+
+            c3, c4 = st.columns(2)
+            status_new = c3.selectbox("状态", ["草稿", "进行中", "已结束"], index=0, key="create_status")
+            remark_new = c4.text_input("备注", value="", key="create_remark")
+
+            submitted = st.form_submit_button("创建活动")
+
+
+
+    if submitted:
+        payload = {
+            "name": name or "新活动",
+            "period": period,
+            "start_date": str(start_date_input) if start_date_input else "",
+            "end_date": str(end_date_input) if end_date_input else "",
+            "status": status_new,
+            "remark": remark_new,
+        }
+        new_activity = add_activity(payload)
+        st.session_state.current_activity_id = new_activity["id"]
+        st.success("已创建活动")
+        st.rerun()
+
+    if not activities:
+        st.sidebar.error("未找到活动，请新建一个活动")
+        st.stop()
+
+    # 活动下拉选择（含状态色标）
+    option_labels = [
+        f"{STATUS_BADGE.get(a.get('status',''), '⚪️')} {a['name']}｜{a.get('period','未设期数')}"
+        for a in activities
+    ]
+    option_map = {label: act["id"] for label, act in zip(option_labels, activities)}
+    current_label = next((lbl for lbl, aid in option_map.items() if aid == st.session_state.current_activity_id), option_labels[0])
+    selected_label = st.sidebar.selectbox("选择活动", option_labels, index=option_labels.index(current_label))
+    st.session_state.current_activity_id = option_map[selected_label]
+
+
+    current_activity = get_activity_by_id(st.session_state.current_activity_id) or activities[0]
+
+    st.title(f"活动奖励计算系统 - {current_activity.get('name', '未命名')}")
+    st.caption("上传作品数据 → 调整梯度 → 预览结果 → 下载Excel")
+
+    st.sidebar.markdown(
+        f"**当前活动：** {STATUS_BADGE.get(current_activity.get('status',''), '⚪️')} {current_activity.get('name','未命名')}"
+    )
+
+    # 当前活动详情卡片（直接编辑，紧凑布局）
+    st.sidebar.markdown("**当前活动详情**")
+
+    c1, c2 = st.sidebar.columns(2)
+    name_edit = c1.text_input("名称", value=current_activity.get("name", ""), key="act_name")
+    period_edit = c2.text_input("期数", value=current_activity.get("period", ""), key="act_period")
+
+    d1, d2 = st.sidebar.columns(2)
+    start_date_val = _parse_date(current_activity.get("start_date"))
+    end_date_val = _parse_date(current_activity.get("end_date"))
+    start_date_edit = d1.date_input("开始日期", value=start_date_val, key="act_start")
+    end_date_edit = d2.date_input("结束日期", value=end_date_val, key="act_end")
+
+    c3, c4 = st.sidebar.columns(2)
+    status_options = ["草稿", "进行中", "已结束"]
+    status_edit = c3.selectbox(
+        "状态",
+        status_options,
+        index=status_options.index(current_activity.get("status", "草稿")),
+        key="act_status",
+        format_func=lambda s: STATUS_BADGE.get(s, str(s)),
+    )
+
+    remark_edit = c4.text_input("备注", value=current_activity.get("remark", ""), key="act_remark")
+
+
+
+    action_col1, action_col2 = st.sidebar.columns(2)
+    if action_col1.button("保存活动信息"):
+        update_activity_meta(
+            current_activity["id"],
+            {
+                "name": name_edit,
+                "period": period_edit,
+                "start_date": str(start_date_edit) if start_date_edit else "",
+                "end_date": str(end_date_edit) if end_date_edit else "",
+                "status": status_edit,
+                "remark": remark_edit,
+            },
+        )
+        st.success("活动信息已更新")
+        st.rerun()
+
+    # 删除当前活动（两步确认弹窗式体验，同行放置）
+    if "show_delete_confirm" not in st.session_state:
+        st.session_state.show_delete_confirm = False
+
+    if action_col2.button("🗑️ 删除当前活动"):
+        st.session_state.show_delete_confirm = True
+
+    if st.session_state.show_delete_confirm:
+        st.sidebar.warning("确认删除当前活动？此操作不可恢复，且至少保留1个活动。")
+        dc1, dc2 = st.sidebar.columns(2)
+        if dc1.button("确认删除", key="confirm_delete_btn"):
             try:
-                if n.endswith(".csv"):
-                    try:
-                        mdf = pd.read_csv(cfg)
-                    except:
-                        cfg.seek(0)
-                        mdf = pd.read_csv(cfg, encoding="gbk")
-                else:
-                    data = cfg.read()
-                    bio = io.BytesIO(data)
-                    if n.endswith(".xlsx"):
-                        try:
-                            mdf = pd.read_excel(bio, engine="calamine")
-                        except:
-                            bio.seek(0)
-                            mdf = pd.read_excel(bio, engine="openpyxl")
-                    elif n.endswith(".xls"):
-                        mdf = pd.read_excel(bio, engine="xlrd")
-                    else:
-                        bio.seek(0)
-                        mdf = pd.read_excel(bio)
-            except:
-                mdf = None
-            if mdf is not None:
-                cols = set(mdf.columns)
-                need_plat = "平台" in cols
-                has_val = "阈值数值" in cols
-                has_lab = "阈值标签" in cols
-                has_amt = "奖励金额" in cols
-                if need_plat and has_amt and (has_val or has_lab):
-                    out = mdf.copy()
-                    if not has_val and has_lab:
-                        out["阈值数值"] = out["阈值标签"].apply(normalize_label_to_value)
-                    if not has_lab and has_val:
-                        out["阈值标签"] = out["阈值数值"].apply(value_to_label)
-                    out = out[out["平台"].isin(["B站", "小红书", "抖音", "视频号"])]
-                    out = out[["平台", "阈值标签", "阈值数值", "奖励金额"]].dropna(subset=["阈值数值", "奖励金额"])
-                    mapping = out
-        mapping = st.data_editor(mapping, num_rows="dynamic", width="stretch")
-    with tabs[0]:
-        uploaded = st.file_uploader("上传Excel或CSV文件", type=["xlsx", "xls", "csv"])
-    lookup = build_reward_lookup(mapping)
-    if uploaded is None:
-        return
-    name = getattr(uploaded, "name", "").lower()
-    if name.endswith(".csv"):
-        try:
-            df = pd.read_csv(uploaded)
-        except:
-            try:
-                uploaded.seek(0)
-                df = pd.read_csv(uploaded, encoding="gbk")
-            except:
-                st.error("CSV读取失败，请确认编码与文件格式")
-                return
-    else:
-        try:
-            data = uploaded.read()
-            bio = io.BytesIO(data)
-            if name.endswith(".xlsx"):
-                df = read_xlsx_robust(bio)
-            elif name.endswith(".xls"):
-                df = pd.read_excel(bio, engine="xlrd")
+                delete_activity(current_activity["id"])
+            except Exception as exc:  # noqa: BLE001
+                st.sidebar.error(str(exc))
             else:
-                bio.seek(0)
-                df = pd.read_excel(bio)
-        except Exception as e:
-            st.error(describe_excel_error(e, name))
-            return
-    required = ["渠道", "播放量", "点赞", "作品类型", "账号名称"]
-    miss = [c for c in required if c not in df.columns]
-    if miss:
-        st.error("缺少字段: " + ", ".join(miss))
-        return
-    df["渠道"] = df["渠道"].apply(normalize_platform)
-    df["播放量数值"] = df["播放量"].apply(parse_number)
-    df["点赞数值"] = df["点赞"].apply(parse_number)
-    text_cols = []
-    for c in ["作品类型", "内容", "标题", "作品标题"]:
-        if c in df.columns:
-            text_cols.append(c)
-    kept, removed = filter_banned(df, text_cols if text_cols else ["作品类型"])
-    kept["基础奖励"] = kept.apply(lambda x: base_reward(x["渠道"], x["播放量数值"], lookup), axis=1)
-    kept["限时奖励"] = kept.apply(lambda x: limited_time_bonus(x["播放量数值"], x["作品类型"]), axis=1)
-    kept["优秀奖励"] = kept.apply(lambda x: excellence_bonus(x["渠道"], x["作品类型"], x["点赞数值"], x["播放量数值"]), axis=1)
-    kept["总奖励"] = kept[["基础奖励", "限时奖励", "优秀奖励"]].sum(axis=1)
-    kept = pick_top5_per_author(kept)
-    result = kept.copy()
-    result = result[["渠道", "账号名称", "播放量", "点赞", "作品类型", "基础奖励", "限时奖励", "优秀奖励", "总奖励", "是否计入结算"]]
-    with tabs[0]:
-        summary = result[result["是否计入结算"]].groupby("账号名称", as_index=False)["总奖励"].sum().rename(columns={"总奖励": "结算金额"})
-        total_payout = summary["结算金额"].sum() if not summary.empty else 0.0
-        total_views = result[result["是否计入结算"]]["播放量数值"].sum() if "播放量数值" in result.columns else 0.0
-        counted = int(result["是否计入结算"].sum())
-        authors = summary.shape[0]
-        cols = st.columns(4)
-        cols[0].metric("总结算金额", f"{total_payout:,.2f} 元")
-        cols[1].metric("总播放量", f"{int(total_views):,}")
-        cols[2].metric("计入条目数", f"{counted}")
-        cols[3].metric("作者数", f"{authors}")
-        st.subheader("结算预览")
-        st.dataframe(result, width="stretch")
-        st.subheader("奖金Top5作者")
-        top5 = summary.sort_values("结算金额", ascending=False).head(5)
-        st.bar_chart(top5.set_index("账号名称"))
-        st.subheader("被排除内容")
-        if not removed.empty:
-            st.dataframe(removed, width="stretch")
-    buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        result.to_excel(writer, index=False, sheet_name="结算明细")
-        summary.to_excel(writer, index=False, sheet_name="作者汇总")
-        mapping.to_excel(writer, index=False, sheet_name="奖励配置")
-    st.download_button("下载处理后的Excel", data=buffer.getvalue(), file_name="101俱乐部结算结果.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                remaining = load_activities()
+                if remaining:
+                    st.session_state.current_activity_id = remaining[0]["id"]
+                st.success("活动已删除")
+            st.session_state.show_delete_confirm = False
+            st.rerun()
+        if dc2.button("取消", key="cancel_delete_btn"):
+            st.session_state.show_delete_confirm = False
+            st.rerun()
 
-render()
+
+
+
+
+    # 梯度与规则（主区）
+    st.subheader("梯度与规则")
+    st.markdown("可在下表中直接修改奖励金额或阈值，阈值需为数字。")
+
+    rule_versions = current_activity.get("rule_versions") or []
+    rule_cfg = rule_versions[0] if rule_versions else {
+        "table": DEFAULT_REWARD_TABLE.to_dict(orient="records"),
+        "quality_rules": DEFAULT_QUALITY_RULES,
+        "time_rules": DEFAULT_TIME_RULES,
+    }
+
+    current_rule_table: list[dict[str, object]] = cast(
+        list[dict[str, object]], rule_cfg.get("table") or DEFAULT_REWARD_TABLE.to_dict(orient="records")
+    )
+    quality_rules_data: list[dict[str, object]] = cast(
+        list[dict[str, object]], rule_cfg.get("quality_rules") or DEFAULT_QUALITY_RULES
+    )
+    time_rules_data: list[dict[str, object]] = cast(
+        list[dict[str, object]], rule_cfg.get("time_rules") or DEFAULT_TIME_RULES
+    )
+
+    base_tab, quality_tab, time_tab = st.tabs(["基础奖励", "优秀奖励", "限时奖励"])
+
+    # 先初始化容器，供保存时读取
+    reward_table: pd.DataFrame = pd.DataFrame(current_rule_table)
+    quality_table: pd.DataFrame = pd.DataFrame(quality_rules_data)
+    time_table: pd.DataFrame = pd.DataFrame(time_rules_data)
+    base_mode = str(rule_cfg.get("base_mode", "档位"))
+    base_params = cast(dict[str, object], rule_cfg.get("base_params", {}))
+    cpm_cfg = cast(dict[str, float], base_params.get("cpm", {}))
+    pool_cfg = cast(dict[str, float], base_params.get("pool", {}))
+
+    with base_tab:
+        base_mode = st.radio(
+            "基础奖励计算模式",
+            ["档位", "CPM", "瓜分"],
+            horizontal=True,
+            index=["档位", "CPM", "瓜分"].index(base_mode if base_mode in ["档位", "CPM", "瓜分"] else "档位"),
+            key="base_mode_radio",
+        )
+
+        if base_mode == "档位":
+            st.markdown("**档位配置**")
+            reward_table = st.data_editor(
+                pd.DataFrame(current_rule_table),
+                num_rows="dynamic",
+                width="stretch",
+                hide_index=True,
+                key="tier_editor",
+                column_config={"阈值": st.column_config.NumberColumn("阈值", format="%d", help="对应播放量下限")},
+            )
+        elif base_mode == "CPM":
+            st.markdown("**CPM 配置（元/千次）**")
+            col1, col2, col3 = st.columns(3)
+            rate_dy = col1.number_input("抖音/视频号 CPM", value=float(cpm_cfg.get("抖音/视频号", 0.30)), step=0.1, format="%0.2f")
+            rate_xhs = col2.number_input("小红书 CPM", value=float(cpm_cfg.get("小红书", 0.90)), step=0.1, format="%0.2f")
+            rate_bili = col3.number_input("B站 CPM", value=float(cpm_cfg.get("B站", 1.80)), step=0.1, format="%0.2f")
+            cpm_cfg = {"抖音/视频号": rate_dy, "小红书": rate_xhs, "B站": rate_bili}
+        else:  # 瓜分
+            st.markdown("**瓜分配置**")
+            col1, col2 = st.columns(2)
+            pool_total = col1.number_input("奖金池总额(元)", value=float(pool_cfg.get("total", 10000)), step=100.0)
+            pool_min = col2.number_input("最低播放量门槛", value=float(pool_cfg.get("min_play", 10000)), step=100.0)
+            pool_cfg = {"total": pool_total, "min_play": pool_min}
+
+    with quality_tab:
+        st.markdown("**优秀奖励规则**")
+        quality_table = st.data_editor(
+            pd.DataFrame(quality_rules_data),
+            num_rows="dynamic",
+            width="stretch",
+            hide_index=True,
+            key="quality_editor",
+            column_config={
+                "阈值": st.column_config.NumberColumn("阈值", format="%d"),
+                "加成": st.column_config.NumberColumn("加成", format="%d"),
+                "仅短视频": st.column_config.CheckboxColumn("仅短视频"),
+            },
+        )
+
+    with time_tab:
+        st.markdown("**限时奖励规则**")
+        time_table = st.data_editor(
+            pd.DataFrame(time_rules_data),
+            num_rows="dynamic",
+            width="stretch",
+            hide_index=True,
+            key="time_editor",
+            column_config={
+                "播放下限": st.column_config.NumberColumn("播放下限", format="%d"),
+                "加成": st.column_config.NumberColumn("加成", format="%d"),
+            },
+        )
+
+    if st.button("保存基础奖励配置"):
+        # 过滤空行
+        tiers_clean = [row for row in reward_table.to_dict(orient="records") if any(str(v).strip() for v in row.values())]
+        update_activity_rule(
+            current_activity["id"],
+            pd.DataFrame(tiers_clean if base_mode == "档位" else reward_table),
+            quality_rules=cast(list[dict[str, object]], quality_table.to_dict(orient="records")),
+            time_rules=cast(list[dict[str, object]], time_table.to_dict(orient="records")),
+            base_mode=base_mode,
+            base_params={"tiers": tiers_clean, "cpm": cpm_cfg, "pool": pool_cfg},
+        )
+        st.success("基础奖励配置已保存到当前活动")
+
+
+
+
+    # 数据上传区（默认展开）
+    with st.sidebar.expander("📤 数据上传", expanded=True):
+        st.caption("上传前请确认字段要求，支持拖拽或浏览上传。")
+        st.markdown(REQUIRED_HINT)
+        use_sample = st.button("使用示例数据", key="use_sample_btn")
+        uploaded = st.file_uploader("上传数据文件 (CSV 或 Excel)", type=["csv", "xlsx", "xls"], key="uploader")
+
+    # 辅助功能区（默认收起）
+    with st.sidebar.expander("🛠️ 高级选项", expanded=False):
+        st.caption("收纳不常用功能，减少干扰")
+        st.button("导出活动配置", disabled=True, help="后续支持")
+        st.button("导入活动配置", disabled=True, help="后续支持")
+        st.button("清空当前数据", disabled=True, help="后续支持")
+
+    if uploaded:
+        df_uploaded = read_uploaded_file(io.BytesIO(uploaded.read()), uploaded.name)
+        if df_uploaded is None:
+            return
+        df: pd.DataFrame = df_uploaded
+        st.success(f"已加载文件：{uploaded.name}")
+    elif use_sample:
+        df = cast(pd.DataFrame, load_sample_data())
+        st.info("已加载示例数据（reward_system/data/sample_data.csv）。")
+    else:
+        st.info("请在左侧上传文件，或点击“使用示例数据”。")
+        st.stop()
+
+
+    st.info(f"当前数据：{len(df)} 行，{len(df.columns)} 列。预览显示前 200 行（如有）。")
+    with st.expander("查看原始数据", expanded=False):
+        st.dataframe(df.head(200), use_container_width=True, height=360)
+
+    rule_config_payload = {
+        "table": reward_table,
+        "quality_rules": quality_table.to_dict(orient="records"),
+        "time_rules": time_table.to_dict(orient="records"),
+        "base_mode": base_mode,
+        "base_params": {"tiers": reward_table.to_dict(orient="records"), "cpm": cpm_cfg, "pool": pool_cfg},
+    }
+
+    try:
+        result_df = cast(pd.DataFrame, compute_rewards(df, rule_config_payload))
+
+
+    except Exception as exc:  # noqa: BLE001
+
+        msg = str(exc)
+        if "缺少必要字段" in msg or "缺少账号标识" in msg:
+            st.error(f"数据缺列：{msg}。请按字段要求补充后重试。")
+        else:
+            st.error(f"计算出错：{msg}")
+        return
+
+
+    st.subheader("结算预览")
+    total_award: float = float(result_df["总奖励"].sum())
+    valid_count: int = int((result_df["总奖励"] > 0).sum())
+    excluded_count: int = int((result_df["总奖励"] == 0).sum())
+
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("总发放金额", f"¥{total_award:,.0f}")
+    col2.metric("计入作品数", int(valid_count))
+    col3.metric("未计入/0元", int(excluded_count))
+
+    st.dataframe(result_df, use_container_width=True, height=560)
+
+    st.subheader("下载结果")
+    buffer = build_download_buffer(result_df)
+    st.download_button(
+        label="下载处理后的 Excel",
+        data=buffer,
+        file_name=f"{current_activity.get('name','activity')}_结算结果.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+    st.caption(
+        "规则摘要：基础梯度按渠道匹配阈值；热点/新春/长期/当月主题加50；B站热搜+100，热门+200（取其高，支持布尔列或文案）；短视频点赞≥10w加300，播放≥200w加1000，评论数≥5000加200；含 BUG/建议/拉踩 的记录不计入。"
+    )
+
+
+
+if __name__ == "__main__":
+    main()
+
